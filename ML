@@ -1,0 +1,69 @@
+import pandas as pd
+import numpy as np
+from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import f1_score
+from tensorlow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Embedding
+from tensorflow.keras.utils import to_categorical
+
+# Load the data
+train_df = pd.read_csv('train.csv')
+test_df = pd.read_csv('test.csv')
+train_labels_df = pd.read_csv('trainLabels.csv')
+
+# Extract the content feature (cryptographic hash of the raw text)
+content_feature = train_df['content']
+
+# Convert the content feature to numerical values using LabelEncoder
+le = LabelEncoder()
+content_feature_encoded = le.fit_transform(content_feature)
+
+# Create a TF-IDF vectorizer for the content feature
+vectorizer = TfidfVectorizer()
+content_feature_tfidf = vectorizer.fit_transform(content_feature)
+
+# Create a bag-of-words representation using CountVectorizer
+bow_vectorizer = CountVectorizer()
+content_feature_bow = bow_vectorizer.fit_transform(content_feature)
+
+# Create a word embedding using TensorFlow's Embedding layer
+embedding_dim = 128
+embedding_layer = Embedding(input_dim=content_feature_tfidf.shape[1], output_dim=embedding_dim, input_length=content_feature_tfidf.shape[1])
+
+# Split the data into training and validation sets
+X_train, X_val, y_train, y_val = train_test_split(content_feature_tfidf, train_labels_df, test_size=0.2, random_state=42)
+
+# Define a multilabel classification model using TensorFlow
+model = Sequential()
+model.add(embedding_layer)
+model.add(Dense(64, activation='relu'))
+model.add(Dense(train_labels_df.shape[1], activation='sigmoid'))
+
+model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
+
+# Train the model
+model.fit(X_train, y_train, epochs=10, batch_size=32, validation_data=(X_val, y_val))
+
+# Make predictions on the test set
+y_pred = model.predict(test_df)
+
+# Convert the predictions to probabilities
+y_pred_prob = y_pred[:, 1]
+
+# Create a submission file
+submission_df = pd.DataFrame({'id_label': test_df.index, 'probability': y_pred_prob})
+submission_df.to_csv('submission.csv', index=False)
+
+# Use the Hash field value (content feature) to create a hash-based feature
+hash_field_values = train_df['content'].apply(lambda x: hash(x))
+hash_field_values = pd.get_dummies(hash_field_values)
+
+# Use the hash-based feature as an additional input to the model
+X_train_hash = pd.concat([X_train, hash_field_values], axis=1)
+X_val_hash = pd.concat([X_val, hash_field_values], axis=1)
+
+# Train the model with the hash-based feature
+model.fit(X_train_hash, y_train, epochs=10, batch_size=32, validation_data=(X_val_hash, y_val))
+
